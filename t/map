@@ -1,0 +1,160 @@
+# File:    $Id: map,v 1.9 2005/10/08 05:55:08 sauber Exp $
+# Author:  (c) Soren Dossing, 2005
+# License: OSI Artistic License
+#          http://www.opensource.org/licenses/artistic-license.php
+
+########################################################################
+#
+# INSTRUCTIONS:
+#
+# This file contains several example of service types. Edit this file to
+# add more service types. The data string from Nagios is in $_ . Use
+# regular expressions to identify and extract data like the examples below
+# below.  Match on either output: or perfdata: . The code is pure perl,
+# that will be run inside and eval{}. Results are expected in @s. The
+# general format is:
+#
+# /output|perfdata:<servicetype> <key>=<value> <key2=value2> .../
+# and push @s, [ <databasename>,
+#                [ <key>,  GAUGE|DERIVE, <value>  ],
+#                [ <key2>, GAUGE|DERIVE, <value2> ],
+#                [ .       .              .        ],
+#                [ .       .              .        ] ];
+#
+# But more advanced code is possible, as long as the resulting
+# datastructure is correct.
+#
+########################################################################
+
+# Service type: ping
+#   output:PING OK - Packet loss = 0%, RTA = 0.00 ms
+/output:(?:CRITICAL - Host Unreachable|CRITICAL - Time to live exceeded|PING.*?(\d+)%(?:.+?([.\d]+)\sms)?)/
+and push @s, [ "ping",
+               [ "losspct", GAUGE, defined $1 ? $1 : "100" ],
+               [ "rta",     GAUGE, defined $2 ? $2/1000 : "U" ] ];
+
+# Service type: unix-imap
+#   output:IMAP OK - 0.009 second response time on port 143
+/output:IMAP.*?([-.0-9]+) sec/
+and push @s, [ "imap",
+               [ "response", GAUGE, $1 ] ];
+
+# Service type: unix-ldap
+#   ouput:LDAP OK - 0.004 seconds response time
+#   perfdata:time=3657us;;;0
+/output:LDAP.*?([.0-9]+) sec/
+and push @s, [ "ldap",
+               [ "response", GAUGE, $1 ] ];
+
+# Service type: unix-mailq
+#   output:WARNING: mailq is 5717 (threshold w = 5000)
+#   perfdata:unsent=5717;5000;10000;0
+/perfdata:unsent=(\d+);(\d+);(\d+);(\d+)/
+and push @s, [ "mailq",
+               [ "qsize", GAUGE, $1 ],
+               [ "qwarn", GAUGE, $2 ],
+               [ "qcrit", GAUGE, $3 ] ];
+
+# Service type: unix-netstat
+#   output:OK
+#   perfdata:udpInDatagrams=46517147, udpOutDatagrams=46192507, udpInErrors=0,
+#   tcpActiveOpens=1451583, tcpPassiveOpens=1076181, tcpAttemptFails=1909,
+#   tcpEstabResets=5045, tcpCurrEstab=6, tcpOutDataBytes=3162434373,
+#   tcpInDataBytes=1942718261, tcpRetransBytes=215439
+/perfdata:.*udpInDatagrams=(\d+), udpOutDatagrams=(\d+), udpInErrors=(\d+), tcpActiveOpens=(\d+), tcpPassiveOpens=(\d+), tcpAttemptFails=(\d+), tcpEstabResets=(\d+), tcpCurrEstab=(\d+), tcpOutDataBytes=(\d+), tcpInDataBytes=(\d+), tcpRetransBytes=(\d+)/
+and push @s, [ "udp",
+               [ "InPkts",  DERIVE, int $1/300 ],
+               [ "OutPkts", DERIVE, int $2/300 ],
+               [ "Errors",  DERIVE, int $3/300 ] ],
+             [ "tcp",
+               [ "ActOpens",    DERIVE, int $4/300    ],
+               [ "PsvOpens",    DERIVE, int $5/300    ],
+               [ "AttmptFails", DERIVE, int $6/300    ],
+               [ "OutBytes",    DERIVE, int $9/300*8  ],
+               [ "InBytes",     DERIVE, int $10/300*8 ] ];
+
+# Service type: unix-ntp
+#   output:NTP OK: Offset 0.001083 secs, jitter 14.84 msec, peer is stratum 1
+/output:NTP.*Offset ([-.0-9]+).*jitter ([-.0-9]+).*stratum (\d+)/
+and push @s, [ "ntp",
+               [ "offset",  GAUGE, $1      ],
+               [ "jitter",  GAUGE, $2/1000 ],
+               [ "stratum", GAUGE, $3+1    ] ];
+
+# Service type: unix-pop
+#   output:POP OK - 0.008 second response time on port 110
+/output:POP.*?([.0-9]+) second/
+and push @s, [ "pop3",
+               [ "response", GAUGE, $1 ] ];
+
+# Service type: unix-procs
+#   output:PROCS OK: 43 processes
+#
+# NOTE: if perfdata is supplied then match fails and output gets
+# passed on to next processing method
+#
+/output:PROCS.*?(\d+) process.*perfdata:$/s
+and push @s, [ "procs",
+               [ "procs", GAUGE, $1 ] ];
+
+
+# Service type: unix-swap
+#   output:SWAP OK: 96% free (2616 MB out of 2744 MB)
+#   perfdata:swap=2616MB;274;54;0;2744
+/perfdata:swap=(\d+)MB;(\d+);(\d+);\d+;(\d+)/
+and push @s, [ "swap",
+               [ "swapfree", GAUGE, $1*1024**2 ],
+               [ "swapwarn", GAUGE, $2*1024**2 ],
+               [ "swapcrit", GAUGE, $3*1024**2 ],
+               [ "swapmax",  GAUGE, $4*1024**2 ] ];
+
+# Service type: unix-zombies
+#   ouput:PROCS OK: 0 processes with STATE = Z
+/output:PROCS.*?(\d+) processes.*Z/
+and push @s, [ "zombie",
+               [ "zombies", GAUGE, $1 ] ];
+
+##################### Added by james.peel@opsview.com, 10/10/06 ###############################
+
+ # Service type: single windows disk
+ # perfdata:C:\ Used Space=6.48Gb;7.26;7.69;0.00;8.54
+ # servicedescr:Drive C Space
+ # output:C:\ - total: 8.54 Gb - used: 6.48 Gb (76%) - free 2.06 Gb (24%)
+ # output: Used: 6009 MB (8%) Free: 63442 MB (91%)
+/output:Used: ([-.0-9]+) MB \((\d+)%\) Free: ([-.0-9]+) MB \((\d+)%\)/
+and push @s, [ "bytes",
+              ["bytesused", GAUGE, $1 ],
+              [ "pctused", GAUGE, $2 ],
+              [ "bytesfree", GAUGE, $3 ],
+              [ "pctfree", GAUGE, $4 ] ];
+
+
+ # Service type: windows CPU load
+ # output: NOW: Mean:0.000000% Variance: 0.000000% CUMULATIVE: Mean:0.000000% Variance: 0.000000%
+/output:NOW: Mean:([-.0-9]+)% Variance: ([-.0-9]+)% CUMULATIVE: Mean:([-.0-9]+)% Variance: ([-.0-9]+)%/
+and push @s, [ "load",
+             ["mean", GAUGE, $1 ] ];
+
+ # Service type: windows disk queue
+ # output: CurrentDiskQueueLength: 0
+/output:CurrentDiskQueueLength: (\d+)/
+and push @s, [ "queue",
+             [ "queue", GAUGE, $1 ] ];
+
+ # Service type: windows memory
+ # output:Mem: 568 MB (27%) / 2047 MB (72%) Paged Mem: 408 MB (10%) / 3947 MB (89%)
+/output:Mem: ([-.0-9]+) MB \((\d+)%\) \/ ([-.0-9]+) MB \((\d+)%\) Paged Mem: ([-.0-9]+) MB \((\d+)%\) \/ ([-.0-9]+) MB \((\d+)%\)/
+and push @s, [ "memory",
+             [ "mbused", GAUGE, $1 ],
+             [ "pcused", GAUGE, $2 ] ];
+
+ # Service type: unix memory from Opsview check_memory plugin
+ # output: Memory: total 1536 MB, active 104 MB, inactive 167 MB, wired: 123 MB, free: 1143 MB (74%)
+/output:Memory: total ([-.0-9]+) MB, active ([-.0-9]+) MB, inactive ([-.0-9]+) MB, wired: ([-.0-9]+) MB, free: ([-.0-9]+) MB \((\d+)%\)/
+and push @s, [ "memory",
+             [ "total", GAUGE, $1 ],
+             [ "active", GAUGE, $2 ],
+             [ "inactive", GAUGE, $3 ],
+             [ "wired", GAUGE, $4 ],
+             [ "free", GAUGE, $5 ] ];
+
